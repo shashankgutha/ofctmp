@@ -123,9 +123,8 @@ POST metrics-test/_bulk
     "log_to_metadata_index": {
       "index": {
         "index": "host_downtime_metadata",
-        "doc_id": "{{ctx.trigger.scheduled_time}}-{{ctx.payload.aggregations.hosts.buckets.0.key}}",
         "body": {
-          "down_hosts": "{{ctx.payload.aggregations.hosts.buckets}}",
+          "down_hosts": "{{#ctx.payload.aggregations.hosts.buckets}}{{key}},{{/ctx.payload.aggregations.hosts.buckets}}",
           "timestamp": "{{ctx.trigger.scheduled_time}}"
         }
       }
