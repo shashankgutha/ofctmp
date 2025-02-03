@@ -1,76 +1,4 @@
-// First, create the metrics index with mapping
-PUT metrics-2024.02
-{
-  "mappings": {
-    "properties": {
-      "@timestamp": { "type": "date" },
-      "host": {
-        "properties": {
-          "name": { "type": "keyword" }
-        }
-      },
-      "status": {
-        "properties": {
-          "up": { "type": "integer" }
-        }
-      }
-    }
-  }
-}
-
-// Create the alerts index
-PUT host-downtime-alerts
-{
-  "mappings": {
-    "properties": {
-      "host": { "type": "keyword" },
-      "detection_time": { "type": "date" },
-      "downtime_duration": { "type": "keyword" },
-      "alert_timestamp": { "type": "date" }
-    }
-  }
-}
-
-// Insert sample metrics data (using _bulk API)
-POST _bulk
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:00:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:05:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:10:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:15:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:20:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:25:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:00:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:05:00Z", "host": { "name": "server2" }, "status": { "up": 1 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:10:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:15:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:20:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:25:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:00:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:05:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:10:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:15:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:20:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
-{ "index": { "_index": "metrics-2024.02" }}
-{ "@timestamp": "2024-02-03T10:25:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
-
-
+PUT _watcher/watch/testwatcher
 {
   "trigger": {
     "schedule": {
@@ -80,7 +8,7 @@ POST _bulk
   "input": {
     "search": {
       "request": {
-        "indices": ["metrics-*"],
+        "indices": ["inframetrics-*"],
         "body": {
           "size": 0,
           "query": {
@@ -137,7 +65,7 @@ POST _bulk
         
         for (host in hosts) {
           def periods = host.time_periods.buckets;
-          if (periods.size() == 6) {  // Should have 6 5-minute periods in 30 minutes
+          if (periods.size() >= 1) {
             boolean allDown = true;
             for (period in periods) {
               if (period.status.value > 0) {
@@ -163,7 +91,7 @@ POST _bulk
         
         for (host in hosts) {
           def periods = host.time_periods.buckets;
-          if (periods.size() == 6) {
+          if (periods.size() >= 1) {
             boolean allDown = true;
             for (period in periods) {
               if (period.status.value > 0) {
@@ -173,38 +101,111 @@ POST _bulk
             }
             if (allDown) {
               downHosts.add([
-                "host": host.key,
-                "detection_time": ctx.execution_time,
-                "downtime_duration": "30m"
+                "id": host.key + "-" + ctx.execution_time,
+                "body": [
+                  "host": host.key,
+                  "detection_time": ctx.execution_time,
+                  "downtime_duration": "30m",
+                  "alert_timestamp": ctx.execution_time
+                ]
               ]);
             }
           }
         }
-        
-        return [ "down_hosts": downHosts ];
+        return [ "alerts": downHosts ];
       """
     }
   },
   "actions": {
-    "index_record": {
+    "index_payload": {
+      "foreach": "ctx.payload.alerts",
       "index": {
         "index": "host-downtime-alerts"
+      }
+    }
+  }
+}
+
+
+
+
+PUT host-downtime-alerts
+{
+  "mappings": {
+    "properties": {
+      "host": { "type": "keyword" },
+      "detection_time": { "type": "date" },
+      "downtime_duration": { "type": "keyword" },
+      "alert_timestamp": { "type": "date" }
+    }
+  }
+}
+
+
+PUT inframetrics-poc
+{
+  "mappings": {
+    "properties": {
+      "@timestamp": { "type": "date" },
+      "host": {
+        "properties": {
+          "name": { "type": "keyword" }
+        }
       },
-      "body": {
-        "script": {
-          "source": """
-            for (host in ctx.payload.down_hosts) {
-              def doc = [
-                "host": host.host,
-                "detection_time": host.detection_time,
-                "downtime_duration": host.downtime_duration,
-                "alert_timestamp": ctx.execution_time
-              ];
-              ctx.index(doc);
-            }
-          """
+      "status": {
+        "properties": {
+          "up": { "type": "integer" }
         }
       }
     }
   }
 }
+
+
+GET host-downtime-alerts/_search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+POST _watcher/watch/testwatcher/_execute
+
+
+POST _bulk
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:00:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:05:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:10:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:15:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:20:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:25:00Z", "host": { "name": "server1" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:00:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:05:00Z", "host": { "name": "server2" }, "status": { "up": 1 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:10:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:15:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:20:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:25:00Z", "host": { "name": "server2" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:00:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:05:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:10:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:15:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:20:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
+{ "index": { "_index": "inframetrics-poc" }}
+{ "@timestamp": "2025-02-03T10:25:00Z", "host": { "name": "server3" }, "status": { "up": 0 }}
