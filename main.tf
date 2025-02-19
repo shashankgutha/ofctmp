@@ -70,6 +70,92 @@ resource "aws_security_group_rule" "node_egress_internet" {
 
 resource "aws_vpc" "eks_vpc" {
   cidr_block = var.vpc_cidr
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+}
+
+resource "aws_internet_gateway" "eks_igw" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  tags = {
+    Name = "${var.cluster_name}-igw"
+  }
+}
+
+resource "aws_subnet" "eks_public_subnet" {
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = var.public_subnet_cidr
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.cluster_name}-public-subnet"
+  }
+}
+
+resource "aws_route_table" "eks_public_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.eks_igw.id
+  }
+
+  tags = {
+    Name = "${var.cluster_name}-public-rt"
+  }
+}
+
+resource "aws_route_table_association" "eks_public_rta" {
+  subnet_id      = aws_subnet.eks_public_subnet.id
+  route_table_id = aws_route_table.eks_public_rt.id
+}
+
+resource "aws_eip" "nat_eip" {
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.cluster_name}-nat-eip"
+  }
+}
+
+resource "aws_nat_gateway" "eks_nat" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.eks_public_subnet.id
+
+  tags = {
+    Name = "${var.cluster_name}-nat"
+  }
+
+  depends_on = [aws_internet_gateway.eks_igw]
+}
+
+resource "aws_route_table" "eks_private_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.eks_nat.id
+  }
+
+  tags = {
+    Name = "${var.cluster_name}-private-rt"
+  }
+}
+
+resource "aws_route_table_association" "eks_private_rta1" {
+  subnet_id      = aws_subnet.eks_subnet_1.id
+  route_table_id = aws_route_table.eks_private_rt.id
+}
+
+resource "aws_route_table_association" "eks_private_rta2" {
+  subnet_id      = aws_subnet.eks_subnet_2.id
+  route_table_id = aws_route_table.eks_private_rt.id
+}
+
+resource "aws_route_table_association" "eks_private_rta3" {
+  subnet_id      = aws_subnet.eks_subnet_3.id
+  route_table_id = aws_route_table.eks_private_rt.id
 }
 
 resource "aws_subnet" "eks_subnet_1" {
