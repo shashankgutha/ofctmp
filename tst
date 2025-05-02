@@ -1,35 +1,34 @@
-step('Call API with Authorization Header', async () => {
-  // Set Host header for load balancer routing
+step('Navigate to URL with Headers and Check Status', async () => {
+  // Set both Host and Authorization headers
   await page.setExtraHTTPHeaders({
-    'Host': 'target01.example.com'  // Replace with your specific target host
+    'Host': 'target01.example.com',
+    'Authorization': 'Bearer your-auth-token-here'
   });
   
-  // For direct API calls, use Playwright's API request feature
-  const apiContext = await page.context().request;
-  
-  // Make an API call with authorization header
-  const apiResponse = await apiContext.fetch('https://your-api-endpoint.com/path', {
-    method: 'GET', // or 'POST', 'PUT', etc. as needed
-    headers: {
-      'Authorization': 'Bearer your-auth-token-here',
-      // The Host header set above will be included automatically
-    }
+  // Create a response promise before navigation
+  const responsePromise = page.waitForResponse(response => {
+    return response.url().includes('your-api-endpoint.com/path');
   });
+  
+  // Navigate to the URL
+  await page.goto('https://your-api-endpoint.com/path');
+  
+  // Wait for the response
+  const response = await responsePromise;
   
   // Check response status and abort if not 200
-  const statusCode = apiResponse.status();
+  const statusCode = response.status();
   console.log('Response status:', statusCode);
   
   if (statusCode !== 200) {
-    const responseText = await apiResponse.text();
-    console.error(`API call failed with status ${statusCode}: ${responseText}`);
-    throw new Error(`API call failed with status ${statusCode}. Aborting test.`);
+    console.error(`Navigation failed with status ${statusCode}`);
+    throw new Error(`Navigation failed with status ${statusCode}. Aborting test.`);
   }
   
-  // If we reach here, status is 200, so continue
-  const responseData = await apiResponse.json();
-  console.log('Response data:', responseData);
+  // If status is 200, continue with the test
+  console.log('Navigation successful with status 200');
   
-  // Continue with your test using the API response data
-  // ...
+  // Continue with your test...
+  // For example, verify elements on the page
+  await page.waitForSelector('#some-element', { timeout: 5000 });
 });
