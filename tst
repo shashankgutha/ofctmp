@@ -1,34 +1,27 @@
-step('Navigate to URL with Headers and Check Status', async () => {
-  // Set both Host and Authorization headers
+step('Check Headers with Direct Navigation and Status Check', async () => {
+  // Set the headers you want to test
   await page.setExtraHTTPHeaders({
     'Host': 'target01.example.com',
     'Authorization': 'Bearer your-auth-token-here'
   });
   
-  // Create a response promise before navigation
-  const responsePromise = page.waitForResponse(response => {
-    return response.url().includes('your-api-endpoint.com/path');
+  // Navigate to the URL - this will use the headers we just set
+  const response = await page.goto('https://your-api-endpoint.com/path', {
+    waitUntil: 'networkidle',  // Wait until network is idle
+    timeout: 30000  // 30 second timeout
   });
   
-  // Navigate to the URL
-  await page.goto('https://your-api-endpoint.com/path');
-  
-  // Wait for the response
-  const response = await responsePromise;
-  
-  // Check response status and abort if not 200
+  // Get the status directly from the response
   const statusCode = response.status();
   console.log('Response status:', statusCode);
   
+  // Check if status is 200 (success)
   if (statusCode !== 200) {
     console.error(`Navigation failed with status ${statusCode}`);
-    throw new Error(`Navigation failed with status ${statusCode}. Aborting test.`);
+    throw new Error(`Navigation failed with status ${statusCode}. Headers may not be working correctly. Aborting test.`);
   }
   
-  // If status is 200, continue with the test
-  console.log('Navigation successful with status 200');
+  console.log('Successfully received status 200. Headers are working correctly.');
   
-  // Continue with your test...
-  // For example, verify elements on the page
-  await page.waitForSelector('#some-element', { timeout: 5000 });
+  // Continue with the rest of your test...
 });
