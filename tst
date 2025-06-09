@@ -1,5 +1,6 @@
 import os
 import requests
+import hashlib
 from datetime import datetime
 from elasticsearch import Elasticsearch
 from requests.auth import HTTPBasicAuth
@@ -59,14 +60,33 @@ class AternityDataIngestion:
         print(f"Total records fetched: {len(all_records)}")
         return all_records
     
+    def generate_document_id(self, record):
+        """Generate unique document ID using ACCOUNT_ID+APPLICATION_NAME+USERNAME+TIMEFRAME"""
+        account_id = str(record.get('ACCOUNT_ID', ''))
+        application_name = str(record.get('APPLICATION_NAME', ''))
+        username = str(record.get('USERNAME', ''))
+        timeframe = str(record.get('TIMEFRAME', ''))
+        
+        # Create concatenated string
+        id_string = f"{account_id}+{application_name}+{username}+{timeframe}"
+        
+        # Generate MD5 hash for consistent ID
+        hash_id = hashlib.md5(id_string.encode('utf-8')).hexdigest()
+        
+        return hash_id
+    
     def prepare_records_for_ingestion(self, records):
         """Prepare records with additional metadata for Elasticsearch"""
         actions = []
         timestamp = datetime.utcnow().isoformat()
         
         for rec in records:
+            # Generate unique document ID
+            doc_id = self.generate_document_id(rec)
+            
             action = {
                 "_index": self.es_index,
+                "_id": doc_id,
                 "_source": {
                     **rec,
                     "@timestamp": timestamp,
