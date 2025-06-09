@@ -29,21 +29,35 @@ class AternityDataIngestion:
         )
     
     def get_aternity_data(self):
-        """Fetch data from Aternity API"""
+        """Fetch data from Aternity API with pagination support"""
         params = f"&format=json&filter=relative_time({self.time_period}) and activity_name eq '{self.activity}'"
         endpoint = f"https://{self.host}/aternity.odata/latest/BUSINESS_ACTIVITIES_HOURLY?{params}"
         
         auth = HTTPBasicAuth(self.username, self.password)
+        all_records = []
         
-        try:
-            resp = requests.get(endpoint, auth=auth, verify=True)
-            resp.raise_for_status()
-            data = resp.json()
-            records = data.get("value", [])
-            return records
-        except Exception as e:
-            print(f"Exception: {e}")
-            return []
+        while endpoint:
+            try:
+                resp = requests.get(endpoint, auth=auth, verify=True)
+                resp.raise_for_status()
+                data = resp.json()
+                
+                # Add current page records to collection
+                records = data.get("value", [])
+                all_records.extend(records)
+                print(f"Fetched {len(records)} records from current page")
+                
+                # Check for next page
+                endpoint = data.get("@odata.nextLink")
+                if endpoint:
+                    print(f"Found next page: {len(all_records)} total records so far")
+                
+            except Exception as e:
+                print(f"Exception: {e}")
+                break
+        
+        print(f"Total records fetched: {len(all_records)}")
+        return all_records
     
     def prepare_records_for_ingestion(self, records):
         """Prepare records with additional metadata for Elasticsearch"""
