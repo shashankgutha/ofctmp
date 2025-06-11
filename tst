@@ -1,137 +1,111 @@
-import os
-import requests
-import hashlib
-from datetime import datetime
-from elasticsearch import Elasticsearch
-from requests.auth import HTTPBasicAuth
+receivers:
+  github:
+    # GitHub API token - use environment variable for security
+    github_token: ${GITHUB_TOKEN}
+    
+    # Organizations to collect metrics from
+    orgs:
+      - name: "your-org-name"
+        # Optional: specify repositories within the org
+        # If not specified, all accessible repos will be monitored
+        repositories:
+          - "repo1"
+          - "repo2"
+    
+    # Individual repositories (if not part of an org or additional repos)
+    repos:
+      - name: "owner/repository-name"
+      - name: "another-owner/another-repo"
+    
+    # Collection interval
+    collection_interval: 60s
+    
+    # Metrics to collect (all are enabled by default)
+    metrics:
+      github.repository.count:
+        enabled: true
+      github.repository.contributor.count:
+        enabled: true
+      github.pull_request.count:
+        enabled: true
+      github.pull_request.time_open:
+        enabled: true
+      github.pull_request.time_to_merge:
+        enabled: true
+      github.issue.count:
+        enabled: true
+      github.issue.time_open:
+        enabled: true
+      github.commit.count:
+        enabled: true
+      github.branch.count:
+        enabled: true
+      github.branch.time_since_last_commit:
+        enabled: true
 
+processors:
+  # Add resource attributes
+  resource:
+    attributes:
+      - key: service.name
+        value: github-metrics
+        action: upsert
+      - key: service.version
+        value: "1.0.0"
+        action: upsert
+  
+  # Batch processor for efficiency
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
 
-class AternityDataIngestion:
-    def __init__(self):
-        # Aternity API configuration from environment variables
-        self.host = os.getenv('ATERNITY_HOST')
-        self.username = os.getenv('ATERNITY_USERNAME')
-        self.password = os.getenv('ATERNITY_PASSWORD')
-        self.activity = os.getenv('ATERNITY_ACTIVITY', 'Order Details')
-        self.time_period = os.getenv('ATERNITY_TIME_PERIOD', 'last_24_hours')
-        
-        # Elasticsearch configuration from environment variables
-        self.es_host = os.getenv('ES_HOST')
-        self.es_user = os.getenv('ES_USER')
-        self.es_pass = os.getenv('ES_PASS')
-        self.es_index = os.getenv('ES_INDEX')
-        
-        # Initialize Elasticsearch client
-        self.es = Elasticsearch(
-            self.es_host,
-            basic_auth=(self.es_user, self.es_pass),
-            verify_certs=False,
-            ssl_show_warn=False
-        )
-    
-    def get_aternity_data(self):
-        """Fetch data from Aternity API with pagination support"""
-        params = f"&format=json&filter=relative_time({self.time_period}) and activity_name eq '{self.activity}'"
-        endpoint = f"https://{self.host}/aternity.odata/latest/BUSINESS_ACTIVITIES_HOURLY?{params}"
-        
-        auth = HTTPBasicAuth(self.username, self.password)
-        all_records = []
-        
-        while endpoint:
-            try:
-                resp = requests.get(endpoint, auth=auth, verify=True)
-                resp.raise_for_status()
-                data = resp.json()
-                
-                # Add current page records to collection
-                records = data.get("value", [])
-                all_records.extend(records)
-                print(f"Fetched {len(records)} records from current page")
-                
-                # Check for next page
-                endpoint = data.get("@odata.nextLink")
-                if endpoint:
-                    print(f"Found next page: {len(all_records)} total records so far")
-                
-            except Exception as e:
-                print(f"Exception: {e}")
-                break
-        
-        print(f"Total records fetched: {len(all_records)}")
-        return all_records
-    
-    def generate_document_id(self, record):
-        """Generate unique document ID using ACCOUNT_ID+APPLICATION_NAME+USERNAME+TIMEFRAME"""
-        account_id = str(record.get('ACCOUNT_ID', ''))
-        application_name = str(record.get('APPLICATION_NAME', ''))
-        username = str(record.get('USERNAME', ''))
-        timeframe = str(record.get('TIMEFRAME', ''))
-        
-        # Create concatenated string
-        id_string = f"{account_id}+{application_name}+{username}+{timeframe}"
-        
-        # Generate MD5 hash for consistent ID
-        hash_id = hashlib.md5(id_string.encode('utf-8')).hexdigest()
-        
-        return hash_id
-    
-    def prepare_records_for_ingestion(self, records):
-        """Prepare records with additional metadata for Elasticsearch"""
-        actions = []
-        timestamp = datetime.utcnow().isoformat()
-        
-        for rec in records:
-            # Generate unique document ID
-            doc_id = self.generate_document_id(rec)
-            
-            action = {
-                "_index": self.es_index,
-                "_id": doc_id,
-                "_source": {
-                    **rec,
-                    "@timestamp": timestamp,
-                    "data_source": "aternity_api"
-                }
-            }
-            actions.append(action)
-        
-        return actions
-    
-    def ingest_to_elasticsearch(self, actions):
-        """Bulk ingest data to Elasticsearch"""
-        if not actions:
-            print("No data to ingest")
-            return
-        
-        try:
-            from elasticsearch.helpers import bulk
-            bulk(self.es, actions)
-            print(f"Successfully ingested {len(actions)} records")
-        except Exception as e:
-            print(f"Error ingesting data: {e}")
-    
-    def run(self):
-        """Main execution method"""
-        print("Starting Aternity data ingestion...")
-        
-        # Fetch data from Aternity
-        records = self.get_aternity_data()
-        
-        if not records:
-            print("No records found")
-            return
-        
-        print(f"Fetched {len(records)} records")
-        
-        # Prepare records for ingestion
-        actions = self.prepare_records_for_ingestion(records)
-        
-        # Ingest to Elasticsearch
-        self.ingest_to_elasticsearch(actions)
-        
-        print("Aternity data ingestion completed")
+  # Memory limiter to prevent OOM
+  memory_limiter:
+    limit_mib: 256
 
+exporters:
+  # Console exporter for debugging
+  logging:
+    loglevel: info
+  
+  # Prometheus exporter
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: github_metrics
+    const_labels:
+      environment: production
+  
+  # OTLP exporter (e.g., for Jaeger, Grafana Cloud, etc.)
+  otlp:
+    endpoint: "http://localhost:4317"
+    tls:
+      insecure: true
+  
+  # File exporter for local storage
+  file:
+    path: ./github-metrics.json
 
-if __name__ == "__main__":
-    ingestion = AternityDataIngestion()
-    ingestion.run()
+service:
+  pipelines:
+    metrics:
+      receivers: [github]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging, prometheus, file]
+      # Add otlp to exporters list if using OTLP endpoint
+  
+  # Extensions for health checks and performance
+  extensions: [health_check, pprof]
+  
+  # Telemetry configuration
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
