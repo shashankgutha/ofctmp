@@ -1,11 +1,72 @@
-
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: elastic-agent
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: elastic-agent
+rules:
+- apiGroups: [""]
+  resources:
+    - nodes
+    - namespaces
+    - events
+    - pods
+    - services
+    - configmaps
+    - persistentvolumes
+    - persistentvolumeclaims
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions"]
+  resources:
+    - replicasets
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources:
+    - statefulsets
+    - deployments
+    - replicasets
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources:
+    - jobs
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: elastic-agent
+subjects:
+- kind: ServiceAccount
+  name: elastic-agent
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: elastic-agent
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: elastic-agent-secret
+  namespace: default
+type: Opaque
+stringData:
+  enrollment-token: "YOUR_ENROLLMENT_TOKEN_HERE"
+  fleet-url: "https://fleet-server:8220"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: elastic-agent
-  namespace: default # Change this to your desired namespace
+  namespace: default
+  labels:
+    app: elastic-agent
 spec:
-  replicas: 1 # Adjust as needed
+  replicas: 1
   selector:
     matchLabels:
       app: elastic-agent
@@ -14,54 +75,36 @@ spec:
       labels:
         app: elastic-agent
     spec:
-      serviceAccountName: elastic-agent # Create this ServiceAccount if it doesn't exist
+      serviceAccountName: elastic-agent
       containers:
       - name: elastic-agent
-        image: docker.elastic.co/elasticagent/elastic-agent:8.17.3 # Use your Elastic Stack version
+        image: docker.elastic.co/beats/elastic-agent:8.11.0
         env:
-          - name: FLEET_URL
-            value: "https://fleet-server.default.svc:8220" # Replace with your Fleet Server URL
-          - name: FLEET_ENROLLMENT_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: elastic-agent-enrollment-token # Secret containing your enrollment token
-                key: token
-          # If using custom CA for Fleet Server, mount it and reference it here
-          # - name: FLEET_SERVER_CA_TRUSTED_FINGERPRINT
-          #   value: "<YOUR_FLEET_SERVER_CA_FINGERPRINT>"
-          # Or if you have the CA cert mounted:
-          # - name: FLEET_SERVER_CA_PATH
-          #   value: "/etc/pki/fleet-server/ca.crt"
-        # volumeMounts:
-        #   - name: elastic-agent-certs
-        #     mountPath: /etc/pki/fleet-server
-        #     readOnly: true
-      # volumes:
-      #   - name: elastic-agent-certs
-      #     secret:
-      #       secretName: fleet-server-ca-cert # Secret containing the Fleet Server CA certificate
-
-
-
-
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: elastic-agent
-  namespace: default # Change this to your desired namespace
-
-
-
-
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: elastic-agent-enrollment-token
-  namespace: default # Change this to your desired namespace
-type: Opaque
-data:
-  token: <BASE64_ENCODED_ENROLLMENT_TOKEN> # Replace with your base64 encoded enrollment token
-
-
+        - name: FLEET_ENROLLMENT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: elastic-agent-secret
+              key: enrollment-token
+        - name: FLEET_URL
+          valueFrom:
+            secretKeyRef:
+              name: elastic-agent-secret
+              key: fleet-url
+        - name: FLEET_ENROLL
+          value: "1"
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        resources:
+          limits:
+            memory: 500Mi
+          requests:
+            cpu: 100m
+            memory: 200Mi
+        volumeMounts:
+        - name: agent-data
+          mountPath: /usr/share/elastic-agent/data
+      volumes:
+      - name: agent-data
+        emptyDir: {}
