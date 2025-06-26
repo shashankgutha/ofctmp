@@ -1,70 +1,57 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: elastic-agent
-  namespace: default
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: elastic-agent
-rules:
-- apiGroups: [""]
-  resources:
-    - nodes
-    - namespaces
-    - events
-    - pods
-    - services
-    - configmaps
-    - persistentvolumes
-    - persistentvolumeclaims
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["extensions"]
-  resources:
-    - replicasets
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["apps"]
-  resources:
-    - statefulsets
-    - deployments
-    - replicasets
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["batch"]
-  resources:
-    - jobs
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: elastic-agent
-subjects:
-- kind: ServiceAccount
-  name: elastic-agent
-  namespace: default
-roleRef:
-  kind: ClusterRole
-  name: elastic-agent
-  apiGroup: rbac.authorization.k8s.io
----
+## Secret holding Fleet enrollment token
 apiVersion: v1
 kind: Secret
 metadata:
-  name: elastic-agent-secret
-  namespace: default
-type: Opaque
+  name: elastic-agent-fleet-token
+  namespace: elastic-system
 stringData:
-  enrollment-token: "YOUR_ENROLLMENT_TOKEN_HERE"
-  fleet-url: "https://fleet-server:8220"
+  # Replace with your actual enrollment token
+  ENROLLMENT_TOKEN: "<YOUR_ENROLLMENT_TOKEN>"
 ---
-apiVersion: apps/v1
+## Namespace for Elastic components
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elastic-system
+---
+## ServiceAccount with minimal privileges
+aPIversion: v1
+kind: ServiceAccount
+metadata:
+  name: elastic-agent
+  namespace: elastic-system
+---
+## Role and RoleBinding (optional, adjust per your RBAC needs)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: elastic-agent-role
+  namespace: elastic-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: elastic-agent-binding
+  namespace: elastic-system
+subjects:
+  - kind: ServiceAccount
+    name: elastic-agent
+    namespace: elastic-system
+roleRef:
+  kind: Role
+  name: elastic-agent-role
+  apiGroup: rbac.authorization.k8s.io
+---
+## Deployment for Elastic Agent in Deployment mode
+aPIversion: apps/v1
 kind: Deployment
 metadata:
   name: elastic-agent
-  namespace: default
-  labels:
-    app: elastic-agent
+  namespace: elastic-system
 spec:
   replicas: 1
   selector:
@@ -77,34 +64,29 @@ spec:
     spec:
       serviceAccountName: elastic-agent
       containers:
-      - name: elastic-agent
-        image: docker.elastic.co/beats/elastic-agent:8.11.0
-        env:
-        - name: FLEET_ENROLLMENT_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: elastic-agent-secret
-              key: enrollment-token
-        - name: FLEET_URL
-          valueFrom:
-            secretKeyRef:
-              name: elastic-agent-secret
-              key: fleet-url
-        - name: FLEET_ENROLL
-          value: "1"
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        resources:
-          limits:
-            memory: 500Mi
-          requests:
-            cpu: 100m
-            memory: 200Mi
-        volumeMounts:
-        - name: agent-data
-          mountPath: /usr/share/elastic-agent/data
+        - name: elastic-agent
+          image: docker.elastic.co/beats/elastic-agent:8.10.0
+          args:
+            - "--deployment-mode=deployment"
+            - "--fleet-server-es=http://elasticsearch.elastic-system.svc:9200"
+            - "--fleet-server-service-token=$(ENROLLMENT_TOKEN)"
+            - "--fleet-server-policy=default"
+          env:
+            - name: ENROLLMENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: elastic-agent-fleet-token
+                  key: ENROLLMENT_TOKEN
+          resources:
+            limits:
+              memory: 256Mi
+              cpu: 200m
+            requests:
+              memory: 128Mi
+              cpu: 100m
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elastic-agent/data
       volumes:
-      - name: agent-data
-        emptyDir: {}
+        - name: data
+          emptyDir: {}
