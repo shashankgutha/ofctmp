@@ -67,10 +67,12 @@ spec:
         - name: elastic-agent
           image: docker.elastic.co/beats/elastic-agent:8.10.0
           args:
-            - "--deployment-mode=deployment"
-            - "--fleet-server-es=http://elasticsearch.elastic-system.svc:9200"
-            - "--fleet-server-service-token=$(ENROLLMENT_TOKEN)"
-            - "--fleet-server-policy=default"
+            - |
+              /usr/share/elastic-agent/bin/elastic-agent enroll \
+                --fleet-server-es=https://fleet-server.elastic-system.svc:8220 \
+                --fleet-server-service-token=$FLEET_ENROLLMENT_TOKEN \
+                --insecure && \
+              /usr/share/elastic-agent/bin/elastic-agent run
           env:
             - name: ENROLLMENT_TOKEN
               valueFrom:
