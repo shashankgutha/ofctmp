@@ -80,19 +80,26 @@ jobs:
               print('All YAML files are valid!')
           "
 
-      - name: Update elastic-agent.yml
-        if: steps.changed-files.outputs.has_new_inputs == 'true'
-        run: |
-          python3 -c "
-          import yaml
-          import os
-          
           # Load main elastic-agent.yml
           with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'r') as f:
               main_config = yaml.safe_load(f)
           
+          # Debug: Print main config structure
+          print('Main config structure:')
+          print(type(main_config))
+          if isinstance(main_config, dict):
+              print('Keys:', list(main_config.keys()))
+          
+          # Ensure main_config is a dict
+          if not isinstance(main_config, dict):
+              main_config = {}
+          
           # Ensure inputs section exists
           if 'inputs' not in main_config:
+              main_config['inputs'] = []
+          
+          # Ensure inputs is a list
+          if not isinstance(main_config['inputs'], list):
               main_config['inputs'] = []
           
           # Read new input files
@@ -105,10 +112,18 @@ jobs:
                   with open(input_file, 'r') as f:
                       input_config = yaml.safe_load(f)
                   
-                  # Add metadata
-                  input_config['_source'] = input_file
-                  main_config['inputs'].append(input_config)
-                  print(f'Added input from {input_file}')
+                  # Debug: Print input config structure
+                  print(f'Input config from {input_file}:')
+                  print(type(input_config))
+                  
+                  # Ensure input_config is a dict
+                  if isinstance(input_config, dict):
+                      # Add metadata
+                      input_config['_source'] = input_file
+                      main_config['inputs'].append(input_config)
+                      print(f'Added input from {input_file}')
+                  else:
+                      print(f'Skipping {input_file} - not a valid dict structure')
           
           # Save updated config
           with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'w') as f:
