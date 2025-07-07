@@ -80,6 +80,13 @@ jobs:
               print('All YAML files are valid!')
           "
 
+      - name: Update elastic-agent.yml
+        if: steps.changed-files.outputs.has_new_inputs == 'true'
+        run: |
+          python3 -c "
+          import yaml
+          import os
+          
           # Load main elastic-agent.yml
           with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'r') as f:
               main_config = yaml.safe_load(f)
