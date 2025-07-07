@@ -87,6 +87,13 @@ jobs:
           import yaml
           import os
           
+      - name: Update elastic-agent.yml
+        if: steps.changed-files.outputs.has_new_inputs == 'true'
+        run: |
+          python3 -c "
+          import yaml
+          import os
+          
           # Load main elastic-agent.yml
           with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'r') as f:
               main_config = yaml.safe_load(f)
@@ -101,7 +108,7 @@ jobs:
           if not isinstance(main_config, dict):
               main_config = {}
           
-          # Ensure inputs section exists
+          # Ensure inputs section exists as a list
           if 'inputs' not in main_config:
               main_config['inputs'] = []
           
@@ -119,18 +126,33 @@ jobs:
                   with open(input_file, 'r') as f:
                       input_config = yaml.safe_load(f)
                   
-                  # Debug: Print input config structure
+                  # Debug: Print input config structure  
                   print(f'Input config from {input_file}:')
-                  print(type(input_config))
-                  
-                  # Ensure input_config is a dict
+                  print(f'Type: {type(input_config)}')
                   if isinstance(input_config, dict):
-                      # Add metadata
-                      input_config['_source'] = input_file
+                      print(f'Keys: {list(input_config.keys())}')
+                  elif isinstance(input_config, list):
+                      print(f'List length: {len(input_config)}')
+                      if len(input_config) > 0:
+                          print(f'First item type: {type(input_config[0])}')
+                  
+                  # Handle different input structures
+                  if isinstance(input_config, dict):
+                      # Single input as dict - add metadata and append
+                      input_config['# source'] = input_file
                       main_config['inputs'].append(input_config)
-                      print(f'Added input from {input_file}')
+                      print(f'Added single input from {input_file}')
+                  elif isinstance(input_config, list):
+                      # Multiple inputs as list - add each one
+                      for idx, single_input in enumerate(input_config):
+                          if isinstance(single_input, dict):
+                              single_input['# source'] = f'{input_file}[{idx}]'
+                              main_config['inputs'].append(single_input)
+                              print(f'Added input {idx} from {input_file}')
+                          else:
+                              print(f'Skipping item {idx} from {input_file} - not a dict')
                   else:
-                      print(f'Skipping {input_file} - not a valid dict structure')
+                      print(f'Skipping {input_file} - not a valid structure (got {type(input_config)})')
           
           # Save updated config
           with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'w') as f:
