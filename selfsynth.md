@@ -1,119 +1,131 @@
 Overview
 This document outlines the automated flow for managing Elastic Agent configurations through GitHub pull requests, validation, and deployment.
 
-Process Flow Diagram
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Configuration Management Flow                     │
-└─────────────────────────────────────────────────────────────────────┘
+# Elastic Agent Git Workflow Project
 
-Developer              GitHub                 Workflow                 System
-    │                     │                      │                      │
-    │ 1. Create input     │                      │                      │
-    │    file in inputs/  │                      │                      │
-    │                     │                      │                      │
-    │ 2. Create PR        │                      │                      │
-    ├────────────────────▶│                      │                      │
-    │                     │                      │                      │
-    │                     │ 3. PR Event         │                      │
-    │                     ├─────────────────────▶│                      │
-    │                     │                      │                      │
-    │                     │                      │ 4. Validation        │
-    │                     │                      ├─────────────────────▶│
-    │                     │                      │                      │
-    │                     │                      │ 5. Schema Check      │
-    │                     │                      │◄─────────────────────┤
-    │                     │                      │                      │
-    │                     │ 6. Preview Comment   │                      │
-    │                     │◄─────────────────────┤                      │
-    │                     │                      │                      │
-    │ 7. Review & Merge   │                      │                      │
-    ├────────────────────▶│                      │                      │
-    │                     │                      │                      │
-    │                     │ 8. Merge Event       │                      │
-    │                     ├─────────────────────▶│                      │
-    │                     │                      │                      │
-    │                     │                      │ 9. Backup & Merge    │
-    │                     │                      ├─────────────────────▶│
-    │                     │                      │                      │
-    │                     │                      │ 10. Update Config    │
-    │                     │                      │◄─────────────────────┤
-    │                     │                      │                      │
-    │                     │ 11. Commit Changes   │                      │
-    │                     │◄─────────────────────┤                      │
-    │                     │                      │                      │
+## Project Structure
 
-Detailed Flow Steps
-Phase 1: Configuration Submission
-Step 1: Create Input File
+```
+elastic-agent-config/
+├── .github/
+│   └── workflows/
+│       └── elastic-agent-manager.yml
+├── inputs/
+│   ├── logs/
+│   │   ├── apache.yml
+│   │   └── nginx.yml
+│   ├── metrics/
+│   │   ├── system.yml
+│   │   └── docker.yml
+│   └── security/
+│       └── auditd.yml
+├── elastic-agent.yml
+└── README.md
+```
 
-Developer creates YAML configuration file in inputs/ directory
+## Setup Instructions
 
-File contains new input configuration for Elastic Agent
+### 1. Create Repository Structure
 
-Follows standard Elastic Agent input format
+```bash
+mkdir elastic-agent-config
+cd elastic-agent-config
+git init
 
-Step 2: Create Pull Request
+# Create directories
+mkdir -p .github/workflows
+mkdir -p inputs/{logs,metrics,security}
+```
 
-Developer creates PR with input file changes
+### 2. Create Main Elastic Agent Configuration
 
-PR targets main branch with changes in inputs/ path
+Create `elastic-agent.yml`:
 
-Automatic workflow trigger activated
+```yaml
+# elastic-agent.yml
+agent:
+  download:
+    source_uri: "https://artifacts.elastic.co/downloads/"
+  monitoring:
+    enabled: true
+    logs: true
+    metrics: true
 
-Phase 2: Validation & Preview
-Step 3: Workflow Trigger
+inputs: []  # This will be populated automatically
+```
 
-GitHub Actions workflow triggered on PR events
+### 3. Example Input Files
 
-Workflow runs with restricted permissions
+Create sample input files in appropriate folders:
 
-Concurrent execution prevented by workflow groups
+**inputs/logs/apache.yml**
+```yaml
+type: filestream
+id: apache-logs
+enabled: true
+paths:
+  - /var/log/apache2/access.log
+  - /var/log/apache2/error.log
+processors:
+  - add_host_metadata: ~
+```
 
-Step 4: Security Validation
+**inputs/metrics/system.yml**
+```yaml
+type: system/metrics
+id: system-metrics
+enabled: true
+period: 10s
+metricsets:
+  - cpu
+  - load
+  - memory
+  - network
+  - process
+  - process_summary
+```
 
-Path traversal protection validates file locations
-Filename validation ensures safe operations
+## How It Works
 
-Step 5: Configuration Validation
+1. **User adds new input**: Create a new `.yml` file in any subfolder under `inputs/`
+2. **Create PR**: Raise a pull request with the new input file
+3. **Workflow triggers**: GitHub Actions automatically:
+   - Validates YAML syntax
+   - Appends new inputs to `elastic-agent.yml`
+   - Commits changes back to the PR
+   - Comments on PR with summary
 
-YAML syntax validation
+## Usage Example
 
-Elastic Agent schema compliance check
+```bash
+# Add a new input
+mkdir -p inputs/databases
+cat > inputs/databases/mysql.yml << EOF
+type: mysql/metrics
+id: mysql-metrics
+enabled: true
+hosts: ["tcp(127.0.0.1:3306)/"]
+username: monitoring
+password: secret
+period: 10s
+metricsets:
+  - status
+  - galera_status
+EOF
 
-Duplicate input ID detection
+# Commit and push
+git add inputs/databases/mysql.yml
+git commit -m "Add MySQL metrics input"
+git push origin feature/add-mysql-metrics
 
+# Create PR - workflow will automatically validate and update elastic-agent.yml
+```
 
-Step 6: Preview Generation
+## Features
 
-Generate merged configuration preview
-
-Post preview comment on PR
-
-Show validation results and changes
-
-Phase 3: Merge & Deployment
-Step 7: Code Review & Merge
-
-Team reviews PR and preview
-
-Approves and merges PR
-
-Merge event triggers deployment workflow
-
-Step 8: Secure Merge Process
-
-File locking prevents concurrent access
-
-
-Step 9: Configuration Update
-
-New inputs merged into main elastic-agent.yml
-
-Final validation of merged configuration
-
-Rollback on any errors
-
-Step 10: Commit & Deploy
-
-Updated configuration committed to repository
-
+- ✅ Automatic YAML validation
+- ✅ Appends new inputs to main config
+- ✅ Commits changes back to PR
+- ✅ PR comments with summary
+- ✅ Supports nested folder structure
+- ✅ No manual scripts needed
