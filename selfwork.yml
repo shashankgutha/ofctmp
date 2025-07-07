@@ -1,0 +1,164 @@
+# .github/workflows/elastic-agent-manager.yml
+name: Elastic Agent Input Manager
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'inputs/**/*.yml'
+      - 'inputs/**/*.yaml'
+
+env:
+  MAIN_ELASTIC_AGENT_FILE: 'elastic-agent.yml'
+  INPUTS_DIR: 'inputs'
+
+jobs:
+  validate-and-update:
+    runs-on: ubuntu-latest
+    name: Validate YAML and Update Elastic Agent
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install PyYAML
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          # Get new input files from PR
+          git diff --name-only origin/${{ github.base_ref }}...HEAD > changed_files.txt
+          
+          # Filter for YAML files in inputs directory
+          grep "^inputs/.*\.ya\?ml$" changed_files.txt > new_inputs.txt || true
+          
+          if [ -s new_inputs.txt ]; then
+            echo "has_new_inputs=true" >> $GITHUB_OUTPUT
+            echo "New input files found:"
+            cat new_inputs.txt
+          else
+            echo "has_new_inputs=false" >> $GITHUB_OUTPUT
+            echo "No new input files found"
+          fi
+
+      - name: Validate YAML syntax
+        if: steps.changed-files.outputs.has_new_inputs == 'true'
+        run: |
+          python3 -c "
+          import yaml
+          import sys
+          
+          with open('new_inputs.txt', 'r') as f:
+              files = f.read().strip().split('\n')
+          
+          errors = []
+          for file in files:
+              if file.strip():
+                  try:
+                      with open(file, 'r') as f:
+                          yaml.safe_load(f)
+                      print(f'✓ Valid YAML: {file}')
+                  except yaml.YAMLError as e:
+                      errors.append(f'✗ Invalid YAML in {file}: {e}')
+                  except Exception as e:
+                      errors.append(f'✗ Error reading {file}: {e}')
+          
+          if errors:
+              for error in errors:
+                  print(error)
+              sys.exit(1)
+          else:
+              print('All YAML files are valid!')
+          "
+
+      - name: Update elastic-agent.yml
+        if: steps.changed-files.outputs.has_new_inputs == 'true'
+        run: |
+          python3 -c "
+          import yaml
+          import os
+          
+          # Load main elastic-agent.yml
+          with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'r') as f:
+              main_config = yaml.safe_load(f)
+          
+          # Ensure inputs section exists
+          if 'inputs' not in main_config:
+              main_config['inputs'] = []
+          
+          # Read new input files
+          with open('new_inputs.txt', 'r') as f:
+              new_files = [line.strip() for line in f if line.strip()]
+          
+          # Add new inputs
+          for input_file in new_files:
+              if os.path.exists(input_file):
+                  with open(input_file, 'r') as f:
+                      input_config = yaml.safe_load(f)
+                  
+                  # Add metadata
+                  input_config['_source'] = input_file
+                  main_config['inputs'].append(input_config)
+                  print(f'Added input from {input_file}')
+          
+          # Save updated config
+          with open('${{ env.MAIN_ELASTIC_AGENT_FILE }}', 'w') as f:
+              yaml.dump(main_config, f, default_flow_style=False, sort_keys=False, indent=2)
+          
+          print('Updated elastic-agent.yml successfully')
+          "
+
+      - name: Commit and push changes
+        if: steps.changed-files.outputs.has_new_inputs == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add the updated file
+          git add ${{ env.MAIN_ELASTIC_AGENT_FILE }}
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-update: Add new inputs to elastic-agent.yml"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+
+      - name: Comment on PR
+        if: steps.changed-files.outputs.has_new_inputs == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // Read the new input files
+            const newInputs = fs.readFileSync('new_inputs.txt', 'utf8')
+              .split('\n')
+              .filter(line => line.trim())
+              .map(file => `- ${file}`)
+              .join('\n');
+            
+            const comment = `## ✅ Elastic Agent Updated
+            
+            The following input files have been validated and added to \`elastic-agent.yml\`:
+            
+            ${newInputs}
+            
+            The main configuration file has been automatically updated.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
