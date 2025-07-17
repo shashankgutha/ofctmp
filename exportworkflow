@@ -10,7 +10,7 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/export-synthetics-monitors.py'
+      - '.github/scripts/export-synthetics-monitors.py'
       - '.github/workflows/export-synthetics.yml'
 
 jobs:
@@ -32,14 +32,14 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r .github/scripts/requirements.txt
     
     - name: Export Synthetics Monitors
       env:
         KIBANA_URL: ${{ secrets.KIBANA_URL }}
         KIBANA_API_KEY: ${{ secrets.KIBANA_API_KEY }}
       run: |
-        python scripts/export-synthetics-monitors.py
+        python .github/scripts/export-synthetics-monitors.py
     
     - name: Check for changes
       id: git-check
