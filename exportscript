@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import json
+import requests
+import base64
+from datetime import datetime
+from pathlib import Path
+import re
+
+class SyntheticsExporter:
+    def __init__(self, kibana_url, api_key):
+        self.kibana_url = kibana_url.rstrip('/')  # Remove trailing slash
+        self.output_dir = Path('monitors')
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': f'ApiKey {api_key}',
+            'Content-Type': 'application/json',
+            'kbn-xsrf': 'true'
+        })
+
+    def make_request(self, endpoint):
+        """Make HTTP request to Kibana API"""
+        url = f"{self.kibana_url}{endpoint}"
+        
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Request failed: {str(e)}")
+        except json.JSONDecodeError as e:
+            raise Exception(f"Failed to parse JSON response: {str(e)}")
+
+    def get_all_monitors(self):
+        """Fetch all synthetic monitors with pagination"""
+        print("Fetching all synthetic monitors...")
+        
+        all_monitors = []
+        page = 1
+        total_monitors = 0
+        
+        while True:
+            response = self.make_request(f"/api/synthetics/monitors?page={page}&perPage=50")
+            
+            if page == 1:
+                total_monitors = response.get('total', 0)
+                print(f"Found {total_monitors} total monitors")
+            
+            monitors = response.get('monitors', [])
+            all_monitors.extend(monitors)
+            print(f"Fetched page {page}, got {len(monitors)} monitors")
+            
+            if len(all_monitors) >= total_monitors:
+                break
+                
+            page += 1
+        
+        return all_monitors
+
+    def get_monitor_config(self, config_id):
+        """Fetch detailed configuration for a specific monitor"""
+        print(f"Fetching detailed config for monitor: {config_id}")
+        return self.make_request(f"/api/synthetics/monitors/{config_id}")
+
+    def ensure_output_directory(self):
+        """Create output directory if it doesn't exist"""
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Created output directory: {self.output_dir}")
+
+    def sanitize_filename(self, name):
+        """Sanitize filename by replacing invalid characters"""
+        return re.sub(r'[^a-zA-Z0-9.-]', '_', name)
+
+    def export_monitors(self):
+        """Main export function"""
+        try:
+            self.ensure_output_directory()
+            
+            # Get all monitors
+            monitors = self.get_all_monitors()
+            
+            if not monitors:
+                print("No monitors found to export")
+                return
+            
+            # Export each monitor's detailed configuration
+            exported_monitors = []
+            
+            for monitor in monitors:
+                try:
+                    config_id = monitor.get('config_id')
+                    monitor_name = monitor.get('name', config_id)
+                    
+                    detailed_config = self.get_monitor_config(config_id)
+                    
+                    # Create filename from monitor name or config_id
+                    filename = f"{self.sanitize_filename(monitor_name)}.json"
+                    file_path = self.output_dir / filename
+                    
+                    # Write monitor configuration to file
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(detailed_config, f, indent=2, ensure_ascii=False)
+                    
+                    exported_monitors.append({
+                        'config_id': config_id,
+                        'name': monitor_name,
+                        'filename': filename
+                    })
+                    
+                    print(f"Exported: {monitor_name} -> {filename}")
+                    
+                except Exception as e:
+                    print(f"Failed to export monitor {monitor.get('config_id', 'unknown')}: {str(e)}")
+            
+            # Create summary file
+            summary = {
+                'export_timestamp': datetime.utcnow().isoformat() + 'Z',
+                'total_monitors': len(monitors),
+                'exported_monitors': len(exported_monitors),
+                'monitors': exported_monitors
+            }
+            
+            summary_path = self.output_dir / 'export-summary.json'
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, indent=2, ensure_ascii=False)
+            
+            print(f"\nExport completed successfully!")
+            print(f"Total monitors: {len(monitors)}")
+            print(f"Successfully exported: {len(exported_monitors)}")
+            print(f"Output directory: {self.output_dir}")
+            
+        except Exception as e:
+            print(f"Export failed: {str(e)}")
+            sys.exit(1)
+
+def main():
+    """Main execution function"""
+    kibana_url = os.getenv('KIBANA_URL')
+    api_key = os.getenv('KIBANA_API_KEY')
+    
+    if not all([kibana_url, api_key]):
+        print("Missing required environment variables:")
+        print("- KIBANA_URL: Your Kibana instance URL")
+        print("- KIBANA_API_KEY: Your Kibana API key")
+        sys.exit(1)
+    
+    exporter = SyntheticsExporter(kibana_url, api_key)
+    exporter.export_monitors()
+
+if __name__ == "__main__":
+    main()
