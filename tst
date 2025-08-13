@@ -1,38 +1,61 @@
-def process_k8s_secrets(self, config_content):
-    """Process K8SSEC_ prefixed values and convert to Kubernetes ${} format"""
-    import re
-    
-    # Process in multiple passes to handle different patterns
-    processed_content = config_content
-    
-    # Pattern 1: Handle QK8SSEC_ (Q prefix for single quotes)
-    def replace_q_k8s_secret(match):
-        secret_name = match.group(1)
-        return f"'${{{secret_name}}}'"
-    
-    q_pattern = r'QK8SSEC_([A-Za-z_][A-Za-z0-9_.]*)'
-    processed_content = re.sub(q_pattern, replace_q_k8s_secret, processed_content)
-    
-    # Pattern 2: Handle regular K8SSEC_ (with or without quotes)
-    def replace_regular_k8s_secret(match):
-        secret_name = match.group(1)
-        return "${" + secret_name + "}"
-    
-    # This pattern matches K8SSEC_ followed by alphanumeric/underscore/dot characters
-    # It stops at word boundaries or common delimiters
-    regular_pattern = r'K8SSEC_([A-Za-z_][A-Za-z0-9_.]*?)(?=\s|$|"|\'|,|;|:|\)|\]|\}|$)'
-    processed_content = re.sub(regular_pattern, replace_regular_k8s_secret, processed_content)
-    
-    # Count and log replacements
-    q_matches = re.findall(r'QK8SSEC_([A-Za-z_][A-Za-z0-9_.]*)', config_content)
-    regular_matches = re.findall(r'(?<!Q)K8SSEC_([A-Za-z_][A-Za-z0-9_.]*)', config_content)
-    
-    total_matches = len(q_matches) + len(regular_matches)
-    if total_matches > 0:
-        print(f"Converted {total_matches} K8SSEC_ references to Kubernetes secrets:")
-        for match in q_matches:
-            print(f"  QK8SSEC_{match} -> '${{{match}}}'")
-        for match in regular_matches:
-            print(f"  K8SSEC_{match} -> ${{{match}}}")
-    
-    return processed_content
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+receivers:
+  vcenter:
+    endpoint: https://vcsa.hostname.localnet
+    username: ${env:VCENTER_USERNAME}
+    password: ${env:VCENTER_PASSWORD}
+    collection_interval: 5m
+    tls:
+      insecure: false
+      insecure_skip_verify: false
+      ca_file: /path/to/ca.crt
+      cert_file: /path/to/cert.crt
+      key_file: /path/to/key.key
+    metrics:
+      vcenter.host.cpu.utilization:
+        enabled: true
+      vcenter.host.memory.utilization:
+        enabled: true
+      vcenter.vm.cpu.utilization:
+        enabled: true
+      vcenter.vm.memory.utilization:
+        enabled: true
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+exporters:
+  otlp:
+    endpoint: http://your-observability-backend:4317
+    tls:
+      insecure: true
+  
+  # For Splunk Observability Cloud
+  # splunk_hec:
+  #   endpoint: https://ingest.us1.signalfx.com/v1/log
+  #   token: ${env:SPLUNK_TOKEN}
+
+  debug:
+    verbosity: detailed
+
+service:
+  extensions: [health_check, pprof, zpages]
+  pipelines:
+    metrics:
+      receivers: [vcenter]
+      processors: [batch]
+      exporters: [otlp, debug]
+  
+  telemetry:
+    logs:
+      level: info
