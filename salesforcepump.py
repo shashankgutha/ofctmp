@@ -71,12 +71,14 @@ class SalesforceLoginHistoryIngester:
             if not self.es.ping():
                 raise Exception("Cannot connect to Elasticsearch")
             
-            # Create index mapping
+            # Create index mapping - Added Name and Username fields
             mapping = {
                 "mappings": {
                     "properties": {
                         "Id": {"type": "keyword"},
                         "UserId": {"type": "keyword"},
+                        "UserName": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+                        "Username": {"type": "keyword"},
                         "LoginTime": {"type": "date"},
                         "LoginType": {"type": "keyword"},
                         "SourceIp": {"type": "ip"},
@@ -154,6 +156,43 @@ class SalesforceLoginHistoryIngester:
         logger.info(f"Using fallback timestamp: {fallback_time} ({fallback_hours} hours ago)")
         return fallback_time
 
+    def fetch_user_details(self, user_ids):
+        """Fetch user details (Name and Username) for given user IDs"""
+        if not user_ids:
+            return {}
+        
+        try:
+            # Remove duplicates and filter out None values
+            unique_user_ids = list(set([uid for uid in user_ids if uid]))
+            
+            if not unique_user_ids:
+                return {}
+            
+            # Build the SOQL query with IN clause
+            user_ids_quoted = [f"'{uid}'" for uid in unique_user_ids]
+            user_ids_str = ','.join(user_ids_quoted)
+            
+            query = f"SELECT Id, Name, Username FROM User WHERE Id IN ({user_ids_str})"
+            
+            logger.info(f"Fetching user details for {len(unique_user_ids)} unique users")
+            result = self.sf.query_all(query)
+            user_records = result['records']
+            
+            # Create a dictionary mapping UserId to user details
+            user_details = {}
+            for user in user_records:
+                user_details[user['Id']] = {
+                    'UserName': user.get('Name', ''),
+                    'Username': user.get('Username', '')
+                }
+            
+            logger.info(f"Retrieved details for {len(user_details)} users")
+            return user_details
+            
+        except Exception as e:
+            logger.error(f"Error fetching user details: {e}")
+            return {}
+
     def fetch_incremental_data(self):
         """Fetch incremental LoginHistory data since last record in ES"""
         try:
@@ -191,6 +230,39 @@ class SalesforceLoginHistoryIngester:
         except Exception as e:
             logger.error(f"Error fetching incremental data: {e}")
             return []
+
+    def enrich_records_with_user_details(self, records):
+        """Enrich login history records with user details"""
+        if not records:
+            return records
+        
+        try:
+            # Extract unique user IDs from login history records
+            user_ids = [record.get('UserId') for record in records]
+            
+            # Fetch user details in batch
+            user_details = self.fetch_user_details(user_ids)
+            
+            # Enrich each record with user details
+            enriched_records = []
+            for record in records:
+                user_id = record.get('UserId')
+                if user_id in user_details:
+                    record['UserName'] = user_details[user_id]['UserName']
+                    record['Username'] = user_details[user_id]['Username']
+                else:
+                    record['UserName'] = ''
+                    record['Username'] = ''
+                    logger.warning(f"User details not found for UserId: {user_id}")
+                
+                enriched_records.append(record)
+            
+            logger.info(f"Enriched {len(enriched_records)} records with user details")
+            return enriched_records
+            
+        except Exception as e:
+            logger.error(f"Error enriching records with user details: {e}")
+            return records
 
     def bulk_ingest_to_elasticsearch(self, records):
         """Bulk ingest records to Elasticsearch"""
@@ -249,9 +321,12 @@ class SalesforceLoginHistoryIngester:
             # Fetch incremental data
             records = self.fetch_incremental_data()
             
-            # Ingest to Elasticsearch
             if records:
-                ingested_count = self.bulk_ingest_to_elasticsearch(records)
+                # Enrich records with user details
+                enriched_records = self.enrich_records_with_user_details(records)
+                
+                # Ingest to Elasticsearch
+                ingested_count = self.bulk_ingest_to_elasticsearch(enriched_records)
                 logger.info(f"Sync completed: {ingested_count} records ingested")
                 
                 # Show index stats after ingestion
