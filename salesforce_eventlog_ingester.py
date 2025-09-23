@@ -335,49 +335,42 @@ class SalesforceEventLogFileIngester:
         try:
             from elasticsearch.helpers import bulk
             
-            # Group records by event type for data stream routing
-            event_type_groups = {}
-            for record in records:
+            actions = []
+            data_streams_used = set()
+            
+            # Process each record directly
+            for i, record in enumerate(records):
+                # Generate data stream name based on event type
                 event_type = record.get('EventType', 'unknown').lower()
-                if event_type not in event_type_groups:
-                    event_type_groups[event_type] = []
-                event_type_groups[event_type].append(record)
-            
-            total_success = 0
-            total_failed = 0
-            
-            # Process each event type group
-            for event_type, type_records in event_type_groups.items():
-                # Generate data stream name
                 data_stream_name = f"sg-salesforce-{event_type}"
                 
-                # Ensure data stream exists
-                self._ensure_data_stream_exists(data_stream_name)
+                # Track data streams used
+                data_streams_used.add(data_stream_name)
                 
-                actions = []
-                for record in type_records:
-                    # Create unique hash-based document ID
-                    hash_input = f"{record['EventLogFile_Id']}_{record.get('REQUEST_ID', '')}_{record.get('TIMESTAMP', '')}_{len(actions)}"
-                    doc_id = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()[:16]
-                    
-                    action = {
-                        "_index": data_stream_name,
-                        "_id": doc_id,
-                        "_source": record
-                    }
-                    actions.append(action)
+                # Create unique hash-based document ID
+                hash_input = f"{record['EventLogFile_Id']}_{record.get('REQUEST_ID', '')}_{record.get('TIMESTAMP', '')}_{i}"
+                doc_id = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()[:16]
                 
-                # Perform bulk insert for this event type
-                success, failed = bulk(self.es, actions, chunk_size=500, request_timeout=60)
-                total_success += success
-                total_failed += len(failed) if failed else 0
-                
-                logger.info(f"Bulk ingested {success} {event_type} records to data stream {data_stream_name}")
-                if failed:
-                    logger.warning(f"Failed to ingest {len(failed)} {event_type} records")
+                action = {
+                    "_index": data_stream_name,
+                    "_id": doc_id,
+                    "_source": record
+                }
+                actions.append(action)
             
-            logger.info(f"Total ingested {total_success} records across {len(event_type_groups)} data streams")
-            return total_success
+            # Ensure all required data streams exist
+            for data_stream_name in data_streams_used:
+                self._ensure_data_stream_exists(data_stream_name)
+            
+            # Perform bulk insert for all records
+            success, failed = bulk(self.es, actions, chunk_size=500, request_timeout=60)
+            failed_count = len(failed) if failed else 0
+            
+            logger.info(f"Bulk ingested {success} records across {len(data_streams_used)} data streams: {', '.join(sorted(data_streams_used))}")
+            if failed_count > 0:
+                logger.warning(f"Failed to ingest {failed_count} records")
+            
+            return success
             
         except Exception as e:
             logger.error(f"Error during bulk ingestion: {e}")
