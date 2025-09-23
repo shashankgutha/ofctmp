@@ -3,7 +3,6 @@ import time
 import logging
 import csv
 import gzip
-import base64
 import io
 from datetime import datetime, timedelta
 from elasticsearch import Elasticsearch
@@ -248,28 +247,33 @@ class SalesforceEventLogFileIngester:
             
             logger.info(f"Processing EventLogFile: {log_file_id} ({event_type}) from {log_date}")
             
-            # Get the LogFile content (base64 encoded CSV)
-            log_file_content = eventlog_record.get('LogFile')
-            if not log_file_content:
-                logger.warning(f"No LogFile content for {log_file_id}")
+            # Get the LogFile URL path - this contains a reference to download the actual log file
+            log_file_url = eventlog_record.get('LogFile')
+            if not log_file_url:
+                logger.warning(f"No LogFile URL for {log_file_id}")
                 return []
             
-            # Decode base64 content
-            try:
-                decoded_content = base64.b64decode(log_file_content)
-            except Exception as e:
-                logger.error(f"Error decoding base64 content for {log_file_id}: {e}")
-                return []
+            # Download the actual log file content using REST API
+            # Construct the full URL for downloading the log file
+            download_url = f"{self.sf.base_url}sobjects/EventLogFile/{log_file_id}/LogFile"
+            
+            # Make authenticated request to download the file
+            headers = {
+                'Authorization': f'Bearer {self.sf.session_id}',
+                'Accept-Encoding': 'gzip'
+            }
+            
+            response = requests.get(download_url, headers=headers)
+            response.raise_for_status()
+            
+            # The response content is gzipped CSV data
+            decoded_content = response.content
             
             # Check if content is gzipped and decompress if needed
-            try:
-                if decoded_content.startswith(b'\x1f\x8b'):  # gzip magic number
-                    csv_content = gzip.decompress(decoded_content).decode('utf-8')
-                else:
-                    csv_content = decoded_content.decode('utf-8')
-            except Exception as e:
-                logger.error(f"Error decompressing/decoding content for {log_file_id}: {e}")
-                return []
+            if decoded_content.startswith(b'\x1f\x8b'):  # gzip magic number
+                csv_content = gzip.decompress(decoded_content).decode('utf-8')
+            else:
+                csv_content = decoded_content.decode('utf-8')
             
             # Parse CSV content
             csv_reader = csv.DictReader(io.StringIO(csv_content))
