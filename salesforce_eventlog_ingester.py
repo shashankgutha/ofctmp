@@ -4,6 +4,7 @@ import logging
 import csv
 import gzip
 import io
+import hashlib
 from datetime import datetime, timedelta
 from elasticsearch import Elasticsearch
 from simple_salesforce import Salesforce
@@ -138,10 +139,8 @@ class SalesforceEventLogFileIngester:
                 }
             }
             
-            if not self.es.indices.exists(index=self.config['es_index']):
-                self.es.indices.create(index=self.config['es_index'], body=mapping)
-                logger.info(f"Created Elasticsearch index: {self.config['es_index']}")
-            
+            # Data streams are created automatically when needed
+            logger.info("Elasticsearch connection established - data streams will be created automatically")
             return True
             
         except Exception as e:
@@ -149,11 +148,11 @@ class SalesforceEventLogFileIngester:
             return False
 
     def get_latest_sync_timestamp_from_es(self):
-        """Retrieve latest LogDate from Elasticsearch index"""
+        """Retrieve latest LogDate from Elasticsearch data streams"""
         try:
-            # Query for the latest LogDate in the index
+            # Query for the latest LogDate across all Salesforce data streams
             response = self.es.search(
-                index=self.config['es_index'],
+                index="sg-salesforce-*",
                 body={
                     "size": 1,
                     "sort": [{"LogDate": {"order": "desc"}}],
@@ -329,50 +328,156 @@ class SalesforceEventLogFileIngester:
                     logger.warning(f"Could not parse timestamp field {field}: {record[field]} - {e}")
 
     def bulk_ingest_to_elasticsearch(self, records):
-        """Bulk ingest records to Elasticsearch"""
+        """Bulk ingest records to Elasticsearch data streams based on event type"""
         if not records:
             return 0
             
         try:
             from elasticsearch.helpers import bulk
             
-            actions = []
+            # Group records by event type for data stream routing
+            event_type_groups = {}
             for record in records:
-                # Create unique document ID combining EventLogFile ID and record position
-                doc_id = f"{record['EventLogFile_Id']}_{record.get('REQUEST_ID', '')}_{len(actions)}"
+                event_type = record.get('EventType', 'unknown').lower()
+                if event_type not in event_type_groups:
+                    event_type_groups[event_type] = []
+                event_type_groups[event_type].append(record)
+            
+            total_success = 0
+            total_failed = 0
+            
+            # Process each event type group
+            for event_type, type_records in event_type_groups.items():
+                # Generate data stream name
+                data_stream_name = f"sg-salesforce-{event_type}"
                 
-                action = {
-                    "_index": self.config['es_index'],
-                    "_id": doc_id,
-                    "_source": record
-                }
-                actions.append(action)
+                # Ensure data stream exists
+                self._ensure_data_stream_exists(data_stream_name)
+                
+                actions = []
+                for record in type_records:
+                    # Create unique hash-based document ID
+                    hash_input = f"{record['EventLogFile_Id']}_{record.get('REQUEST_ID', '')}_{record.get('TIMESTAMP', '')}_{len(actions)}"
+                    doc_id = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()[:16]
+                    
+                    action = {
+                        "_index": data_stream_name,
+                        "_id": doc_id,
+                        "_source": record
+                    }
+                    actions.append(action)
+                
+                # Perform bulk insert for this event type
+                success, failed = bulk(self.es, actions, chunk_size=500, request_timeout=60)
+                total_success += success
+                total_failed += len(failed) if failed else 0
+                
+                logger.info(f"Bulk ingested {success} {event_type} records to data stream {data_stream_name}")
+                if failed:
+                    logger.warning(f"Failed to ingest {len(failed)} {event_type} records")
             
-            # Perform bulk insert
-            success, failed = bulk(self.es, actions, chunk_size=500, request_timeout=60)
-            
-            logger.info(f"Bulk ingested {success} records to Elasticsearch")
-            if failed:
-                logger.warning(f"Failed to ingest {len(failed)} records")
-            
-            return success
+            logger.info(f"Total ingested {total_success} records across {len(event_type_groups)} data streams")
+            return total_success
             
         except Exception as e:
             logger.error(f"Error during bulk ingestion: {e}")
             return 0
 
-    def get_index_stats(self):
-        """Get statistics about the current index"""
+    def _ensure_data_stream_exists(self, data_stream_name):
+        """Ensure data stream exists, create if it doesn't"""
         try:
-            stats = self.es.indices.stats(index=self.config['es_index'])
-            doc_count = stats['indices'][self.config['es_index']]['total']['docs']['count']
-            size_in_bytes = stats['indices'][self.config['es_index']]['total']['store']['size_in_bytes']
-            size_mb = size_in_bytes / (1024 * 1024)
+            # Check if data stream exists
+            if self.es.indices.exists_data_stream(name=data_stream_name):
+                logger.debug(f"Data stream {data_stream_name} already exists")
+                return True
             
-            logger.info(f"Index stats - Total documents: {doc_count:,}, Size: {size_mb:.2f} MB")
+            # Create data stream with basic template
+            template_name = f"{data_stream_name}-template"
+            
+            # Create index template for the data stream
+            template_body = {
+                "index_patterns": [f"{data_stream_name}*"],
+                "data_stream": {},
+                "template": {
+                    "settings": {
+                        "number_of_shards": 1,
+                        "number_of_replicas": 0
+                    },
+                    "mappings": {
+                        "properties": {
+                            "@timestamp": {
+                                "type": "date"
+                            },
+                            "TIMESTAMP": {
+                                "type": "date",
+                                "format": "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'||yyyy-MM-dd'T'HH:mm:ss'Z'||epoch_millis"
+                            },
+                            "EventType": {
+                                "type": "keyword"
+                            },
+                            "EVENT_TYPE": {
+                                "type": "keyword"
+                            },
+                            "USER_ID": {
+                                "type": "keyword"
+                            },
+                            "ORGANIZATION_ID": {
+                                "type": "keyword"
+                            }
+                        }
+                    }
+                },
+                "priority": 100
+            }
+            
+            # Create the index template
+            self.es.indices.put_index_template(name=template_name, body=template_body)
+            logger.info(f"Created index template {template_name}")
+            
+            # Create the data stream
+            self.es.indices.create_data_stream(name=data_stream_name)
+            logger.info(f"Created data stream {data_stream_name}")
+            
+            return True
             
         except Exception as e:
-            logger.warning(f"Could not retrieve index stats: {e}")
+            logger.error(f"Error ensuring data stream {data_stream_name} exists: {e}")
+            return False
+
+    def get_index_stats(self):
+        """Get statistics about Salesforce data streams"""
+        try:
+            # Get all data streams matching the Salesforce pattern
+            data_streams = self.es.indices.get_data_stream(name="sg-salesforce-*")
+            
+            total_docs = 0
+            total_size_bytes = 0
+            
+            logger.info("Data Stream Statistics:")
+            
+            for ds_name, ds_info in data_streams['data_streams'].items():
+                try:
+                    # Get stats for this data stream
+                    stats = self.es.indices.stats(index=ds_name)
+                    
+                    if ds_name in stats['indices']:
+                        doc_count = stats['indices'][ds_name]['total']['docs']['count']
+                        size_bytes = stats['indices'][ds_name]['total']['store']['size_in_bytes']
+                        size_mb = size_bytes / (1024 * 1024)
+                        
+                        total_docs += doc_count
+                        total_size_bytes += size_bytes
+                        
+                        logger.info(f"  {ds_name}: {doc_count:,} docs, {size_mb:.2f} MB")
+                        
+                except Exception as ds_error:
+                    logger.warning(f"Could not get stats for data stream {ds_name}: {ds_error}")
+            
+            total_size_mb = total_size_bytes / (1024 * 1024)
+            logger.info(f"Total across all Salesforce data streams: {total_docs:,} docs, {total_size_mb:.2f} MB")
+            
+        except Exception as e:
+            logger.warning(f"Could not retrieve data stream stats: {e}")
 
     def run_single_sync(self):
         """Run a single synchronization cycle"""
@@ -465,7 +570,7 @@ YOUR_PRIVATE_KEY_CONTENT_HERE
         'username': 'your.username@example.com',
         'auth_url': 'https://login.salesforce.com',  # Use https://test.salesforce.com for sandbox
         'es_host': 'http://localhost:9200',
-        'es_index': 'salesforce_eventlogfile',
+        # Data streams are automatically created based on event types
         'sync_interval_minutes': 60,            # Sync every hour (EventLogFiles are generated hourly)
         'batch_size': 100,                      # Max EventLogFiles per sync
         'max_retries': 3,                       # Max retry attempts per sync
