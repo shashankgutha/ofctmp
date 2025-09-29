@@ -1,0 +1,11 @@
+There is a need to build dashboards and alerts in Elastic using Salesforce event data. Many important EventLogFile (ELF) types and real-time streams require the paid Salesforce Shield add-on. Elastic Observability’s preferred ingestion and telemetry workflows assume access to Shield-level event data. Without Shield, our visibility into frontend performance, component errors, and real-time security signals is limited.
+
+Solution
+
+Use all freely available Salesforce objects/events (Login/Logout, Lightning Usage, API totals, Apex unexpected exceptions, etc.).
+
+Built a Python ingestor to pull, normalize, and bulk-index those events into Elasticsearch.
+
+Created Kibana dashboards and alerts for sessions, page performance, API usage, and errors.
+
+Kept the pipeline modular to add Shield event types later and added compensations (RUM/synthetics) for gaps.
