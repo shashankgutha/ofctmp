@@ -1,0 +1,29 @@
+| Object/Event Type                          | License Required | Type of License                      | Description                                                                                                       |
+| ------------------------------------------ | ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| **SetupAuditTrail**                        | No               | N/A (Standard Salesforce)            | Tracks metadata setup changes (fields, rules, permissions, etc.) in the org.                                      |
+| **LoginHistory**                           | No               | N/A (Standard Salesforce)            | Records all user login attempts (timestamp, user, status, source IP).  Useful for login monitoring.               |
+| **EventLogFile – Login**                   | No               | N/A (Standard, free event)           | Event log file entry for user logins.                                                 |
+| **EventLogFile – Logout**                  | No               | N/A (Standard, free event)           | Event log file entry for user logouts.                                               |
+| **EventLogFile – API**                     | No               | N/A (Standard, free event)           | Tracks overall API call usage.                                                       |
+| **EventLogFile – ApexUnexpectedException** | No               | N/A (Standard, free event)           | Captures unhandled Apex exceptions in code.                                          |
+| **EventLogFile – CSPViolation**            | No               | N/A (Standard, free event)           | Records Content Security Policy violation events.                               |
+| **EventLogFile – CORS**                    | No               | N/A (Standard, free event)           | Records CORS (cross-origin) policy violation events.                                |
+| **EventLogFile – HostnameRedirect**        | No               | N/A (Standard, free event)           | Logs hostname redirect events.                                                  |
+| **EventLogFile – InsecureExternalAsset**   | No               | N/A (Standard, free event)           | Tracks loading of insecure (HTTP) external assets.                                                      |
+| **EventLogFile – LightningPageView**       | Yes              | Salesforce Shield (Event Monitoring) | Captures Lightning Experience page load events (page name, load time). |
+| **EventLogFile – LightningInteraction**    | Yes              | Salesforce Shield (Event Monitoring) | Tracks user interactions (clicks/taps/scrolls) in Lightning Experience.                  |
+| **EventLogFile – URI**                     | Yes              | Salesforce Shield (Event Monitoring) | Records URI (Classic UI) page click events.                                           |
+| **EventLogFile – ReportExport**            | Yes              | Salesforce Shield (Event Monitoring) | Logs report export events (CSV/PDF downloads).                                           |
+| **EventLogFile – RestAPI**                 | Yes              | Salesforce Shield (Event Monitoring) | Tracks REST API call usage.                                                              |
+| **LoginEvent (Big Object)**                | Yes              | Salesforce Shield (Event Monitoring) | Real-time platform event capturing logins (for Transaction Security policies).           |
+| **LogoutEvent (Big Object)**               | Yes              | Salesforce Shield (Event Monitoring) | Real-time platform event capturing logouts.                                              |
+| **LoginEventStream (Platform Event)**      | Yes              | Salesforce Shield (Event Monitoring) | Real-time streaming event for login activity (Transaction Security).                     |
+| **LightningUsageByPageMetrics**            | No               | N/A (Lightning Usage App)            | Standard object for metrics on most-viewed Lightning pages.                          |
+| **LightningExitByPageMetrics**             | No               | N/A (Lightning Usage App)            | Built-in object for counts of page exits in Lightning.                                                            |
+| **LightningUsageByFlexiPageMetrics**       | No               | N/A (Lightning Usage App)            | Built-in metrics for Lightning Home (FlexiPage) usage.                                                            |
+| **LightningUsageByBrowserMetrics**         | No               | N/A (Lightning Usage App)            | Built-in metrics for Lightning usage by browser type.                                                             |
+| **LightningUsageByAppTypeMetrics**         | No               | N/A (Lightning Usage App)            | Built-in metrics by application type (Lightning vs. Classic).                                                     |
+
+
+
+ELF Object Events are only available 24 hours after they happen.
